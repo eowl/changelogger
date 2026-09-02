@@ -193,14 +193,16 @@ try {
 
   const currentDate = new Date().toISOString().split('T')[0];
   let markdownText = `\n## [${sectionVersion}] ${currentDate}\n\n`;
-  markdownText += `### What's Changed\n`;
 
   if (markdownLines.length > 0) {
     markdownText += markdownLines.join('\n') + '\n';
   } else {
     markdownText += `* No new pull requests merged in this package.\n`;
   }
-  const compareRef = sectionVersion === 'Unreleased' ? 'Unreleased' : `v${sectionVersion}`;
+  // Package mode tags look like "<pkgName>@<version>", single-package mode like "v<version>"
+  const compareRef = sectionVersion === 'Unreleased'
+    ? 'Unreleased'
+    : (pkgName ? `${pkgName}@${sectionVersion}` : `v${sectionVersion}`);
   markdownText += `\n**Full Changelog**: ${baseUrl}/compare/${PREV_TAG}...${compareRef}\n`;
 
   const title = pkgName ? `# ${pkgName} Changelog\n` : `# Changelog\n`;
