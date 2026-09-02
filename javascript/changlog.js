@@ -3,45 +3,63 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-const BASE_URL = "Your repository URL here";
+const config = {};
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const pkgName = process.argv[2];
 
-if (!pkgName) {
-  console.error("Error: Please specify a package name. Example: node changlog.js aeico-ssr");
-  process.exit(1);
+function deriveBaseUrl() {
+  try {
+    const remoteUrl = execSync('git remote get-url origin', { encoding: 'utf8' }).trim();
+    let url = remoteUrl;
+    const sshMatch = url.match(/^git@([^:]+):(.+?)(?:\.git)?$/);
+    if (sshMatch) {
+      return `https://${sshMatch[1]}/${sshMatch[2]}`;
+    }
+    url = url.replace(/\.git$/, '');
+    return url;
+  } catch {
+    console.error('Warning: Cannot derive baseUrl from git remote. PR links may be incorrect.');
+    return '';
+  }
 }
 
-const pkgDir = path.join(__dirname, 'packages', pkgName);
-const changelogPath = path.join(pkgDir, 'CHANGELOG.md');
+const baseUrl = config.baseUrl || deriveBaseUrl();
+const tagFormat = config.tagFormat || (pkgName ? `${pkgName}@*` : 'v*');
+const changelogPath = config.changelogPath || (pkgName
+  ? path.join('packages', pkgName, 'CHANGELOG.md')
+  : path.join(__dirname, 'CHANGELOG.md'));
 
-if (!fs.existsSync(pkgDir)) {
-  console.error(`Error: Directory not found: ${pkgDir}. Please check the package name.`);
-  process.exit(1);
+if (pkgName) {
+  const pkgDir = path.join(__dirname, 'packages', pkgName);
+  if (!fs.existsSync(pkgDir)) {
+    console.error(`Error: Directory not found: ${pkgDir}. Please check the package name.`);
+    process.exit(1);
+  }
+  console.log(`Analyzing package: ${pkgName}...`);
+} else {
+  console.log('Running in single-package mode (no package argument provided).');
 }
 
 try {
   console.log(`Fetching latest tags from remote...`);
   execSync('git fetch origin --tags', { stdio: 'ignore' });
 
-  console.log(`Analyzing package: ${pkgName}...`);
-
-  const tagCmd = `git tag --list "${pkgName}@*" --sort=-v:refname`;
+  const tagCmd = `git tag --list "${tagFormat}" --sort=-v:refname`;
   const tags = execSync(tagCmd, { encoding: 'utf8' }).trim().split('\n').filter(Boolean);
 
   if (tags.length === 0) {
-    console.error(`Warning: No tags matching "${pkgName}@*" found. Cannot compare against a baseline version.`);
+    console.error(`Warning: No tags matching "${tagFormat}" found. Cannot compare against a baseline version.`);
     process.exit(1);
   }
 
   const PREV_TAG = tags[0];
   console.log(`Found previous release tag: ${PREV_TAG}`);
 
-  const relativePkgPath = `packages/${pkgName}`;
-  const logCmd = `git log ${PREV_TAG}..HEAD --merges --first-parent --format="---COMMIT---%n%s%n%b%n%an" -- "${relativePkgPath}"`;
+  const pathFilter = pkgName ? ` -- "packages/${pkgName}"` : '';
+  const logCmd = `git log ${PREV_TAG}..HEAD --merges --first-parent --format="---COMMIT---%n%s%n%b%n%an"${pathFilter}`;
   const logOutput = execSync(logCmd, { encoding: 'utf8' }).trim();
 
   let markdownLines = [];
@@ -61,7 +79,7 @@ try {
 
         if (prMatch) {
             const prNumber = prMatch[1];
-            const prLink = `[#${prNumber}](${BASE_URL}/pull/${prNumber})`;
+            const prLink = `[#${prNumber}](${baseUrl}/pull/${prNumber})`;
             markdownLines.push(`* ${prTitle} by @${author} in ${prLink}`);
         } else {
             markdownLines.push(`* ${subject} by @${author}`);
@@ -78,7 +96,9 @@ try {
   } else {
     markdownText += `* No new pull requests merged in this package.\n`;
   }
-  markdownText += `\n**Full Changelog**: ${BASE_URL}/compare/${PREV_TAG}...[Unreleased]\n`;
+  markdownText += `\n**Full Changelog**: ${baseUrl}/compare/${PREV_TAG}...[Unreleased]\n`;
+
+  const title = pkgName ? `# ${pkgName} Changelog\n` : `# Changelog\n`;
 
   if (fs.existsSync(changelogPath)) {
     let existingContent = fs.readFileSync(changelogPath, 'utf8');
@@ -94,7 +114,7 @@ try {
       console.log(`No [Unreleased] section found. Successfully prepended a new section: ${changelogPath}`);
     }
   } else {
-    fs.writeFileSync(changelogPath, `# ${pkgName} Changelog\n` + markdownText, 'utf8');
+    fs.writeFileSync(changelogPath, title + markdownText, 'utf8');
     console.log(`Created and wrote changelog file: ${changelogPath}`);
   }
 
